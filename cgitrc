@@ -1,2 +1,3 @@
-desc=Very simple boot splash screensection=-Yocto Tools
+desc=Very simple boot splash screen
+section=-Yocto Tools
 hide=0
