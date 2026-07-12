@@ -66,6 +66,14 @@ psplash_fb_draw_rect (PSplashFB    *fb,
 		      uint8        blue);
 
 void
+psplash_fb_plot_pixel (PSplashFB    *fb,
+		      int          x,
+		      int          y,
+		      uint8        red,
+		      uint8        green,
+		      uint8        blue);
+
+void
 psplash_fb_draw_image (PSplashFB    *fb, 
 		       int          x, 
 		       int          y, 

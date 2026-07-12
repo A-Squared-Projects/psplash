@@ -352,7 +352,7 @@ psplash_fb_new (int angle, int fbdev_id)
 
 #define OFFSET(fb,x,y) (((y) * (fb)->stride) + ((x) * ((fb)->bpp >> 3)))
 
-static inline void
+void
 psplash_fb_plot_pixel (PSplashFB    *fb,
 		       int          x,
 		       int          y,

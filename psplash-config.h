@@ -32,4 +32,21 @@
 /* Position of the image split from top edge, denominator of fraction */
 #define PSPLASH_IMG_SPLIT_DENOMINATOR 6
 
+/* Top edge of the FreeType MSG text area, as a fraction of the screen height
+ * from the top edge. If undefined, the bottom edge of the logo image is used;
+ * define both to place it relative to the artwork instead, e.g. when a
+ * fullscreen image has its own wordmark partway down. */
+/* #define PSPLASH_MSG_TOP_NUMERATOR 281 */
+/* #define PSPLASH_MSG_TOP_DENOMINATOR 480 */
+
+/* Pixel size of the FreeType MSG font */
+#ifndef PSPLASH_MSG_FONT_SIZE
+#define PSPLASH_MSG_FONT_SIZE 34
+#endif
+
+/* Widest line of FreeType MSG text, in percent of the screen width */
+#ifndef PSPLASH_MSG_MAX_WIDTH_PERCENT
+#define PSPLASH_MSG_MAX_WIDTH_PERCENT 90
+#endif
+
 #endif

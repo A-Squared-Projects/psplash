@@ -12,6 +12,27 @@ if test "x$GCC" = "xyes"; then
         GCC_FLAGS="-g -Wall -Wextra"
 fi
 
+AC_ARG_ENABLE([freetype],
+    AS_HELP_STRING([--enable-freetype], [Render MSG text with FreeType from a scalable font]),
+    [enable_freetype=$enableval],
+    [enable_freetype=no])
+AS_IF([test "x$enable_freetype" = "xyes"], [
+    PKG_CHECK_MODULES(FREETYPE, freetype2)
+    EXTRA_GCC_FLAGS="$EXTRA_GCC_FLAGS -DHAVE_FREETYPE"
+])
+
+# Path to the scalable MSG font, loaded at runtime rather than compiled in -
+# see psplash.c's msg_ft_init(). Deliberately a path and not an embedded
+# blob: a font whose licence forbids modification cannot live inside a
+# GPL-2 binary. Only used with --enable-freetype; if the file is absent at
+# runtime psplash falls back to the built-in bitmap font.
+AC_ARG_WITH([msg-font],
+	    AS_HELP_STRING([--with-msg-font=PATH],
+			   [runtime path to the scalable MSG font]),
+	    [PSPLASH_MSG_FONT_PATH="$withval"],
+	    [PSPLASH_MSG_FONT_PATH="${datadir}/psplash/msg-font.ttf"])
+AC_SUBST(PSPLASH_MSG_FONT_PATH)
+
 AC_ARG_WITH([systemd], AS_HELP_STRING([--with-systemd], [Build with systemd
 	     support]))
 

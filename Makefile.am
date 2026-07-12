@@ -1,6 +1,7 @@
 bin_PROGRAMS=psplash psplash-write
 
-AM_CFLAGS = $(GCC_FLAGS) $(EXTRA_GCC_FLAGS) -D_GNU_SOURCE -DFONT_HEADER=\"$(FONT_NAME)-font.h\" -DFONT_DEF=$(FONT_NAME)_font
+AM_CFLAGS = $(GCC_FLAGS) $(EXTRA_GCC_FLAGS) -D_GNU_SOURCE -DFONT_HEADER=\"$(FONT_NAME)-font.h\" -DFONT_DEF=$(FONT_NAME)_font \
+	     -DPSPLASH_MSG_FONT_PATH=\"$(PSPLASH_MSG_FONT_PATH)\" $(FREETYPE_CFLAGS)
 
 psplash_SOURCES = psplash.c psplash.h psplash-fb.c psplash-fb.h \
                   psplash-console.c psplash-console.h           \
@@ -8,11 +9,13 @@ psplash_SOURCES = psplash.c psplash.h psplash-fb.c psplash-fb.h \
 		  psplash-poky-img.h psplash-bar-img.h $(FONT_NAME)-font.h
 BUILT_SOURCES = psplash-poky-img.h psplash-bar-img.h
 
+psplash_LDADD = $(FREETYPE_LIBS)
+
 psplash_write_SOURCES = psplash-write.c psplash.h
 
 if HAVE_SYSTEMD
 psplash_CPPFLAGS = $(SYSTEMD_CFLAGS) -DHAVE_SYSTEMD
-psplash_LDADD = $(SYSTEMD_LIBS)
+psplash_LDADD += $(SYSTEMD_LIBS)
 bin_PROGRAMS += psplash-systemd
 psplash_systemd_CPPFLAGS = $(SYSTEMD_CFLAGS)
 psplash_systemd_LDADD = $(SYSTEMD_LIBS)

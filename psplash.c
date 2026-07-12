@@ -18,7 +18,16 @@
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
+
 #include FONT_HEADER
+
+#ifdef HAVE_FREETYPE
+/* MSG text is rendered with FreeType from a scalable font loaded at runtime
+ * (PSPLASH_MSG_FONT_PATH), falling back to the bitmap font above if it cannot
+ * be loaded. Word-wrap is ours to do - FreeType only rasterizes glyphs. */
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#endif /* HAVE_FREETYPE */
 
 #define SPLIT_LINE_POS(fb)                                  \
 	(  (fb)->height                                     \
@@ -26,6 +35,14 @@
 	     - PSPLASH_IMG_SPLIT_NUMERATOR)                 \
 	    * (fb)->height / PSPLASH_IMG_SPLIT_DENOMINATOR) \
 	)
+
+#if PSPLASH_IMG_FULLSCREEN
+#define LOGO_POS_Y(fb) (((fb)->height - POKY_IMG_HEIGHT) / 2)
+#else
+#define LOGO_POS_Y(fb)                                      \
+	(((fb)->height * PSPLASH_IMG_SPLIT_NUMERATOR        \
+	  / PSPLASH_IMG_SPLIT_DENOMINATOR - POKY_IMG_HEIGHT) / 2)
+#endif
 
 void
 psplash_exit (int UNUSED(signum))
@@ -35,30 +52,278 @@ psplash_exit (int UNUSED(signum))
   psplash_console_reset ();
 }
 
-void
-psplash_draw_msg (PSplashFB *fb, const char *msg)
+#ifdef HAVE_FREETYPE
+#define MSG_MAX_LINES 8
+#define MSG_MAX_WORDS 32
+
+struct msg_word {
+  const char *start;
+  size_t      len;   /* bytes */
+  int         width; /* pixels */
+};
+
+/* Loaded on first use and kept for the life of the process, so each MSG
+ * does not re-parse the font.
+ *
+ * The face is read from a file, not compiled in: psplash is
+ * GPL-2.0-or-later, and a font whose terms forbid modification cannot be
+ * linked into it. Read from disk it is data beside the program. */
+static FT_Library msg_ft_library;
+static FT_Face    msg_ft_face;
+static int        msg_ft_ready;
+static int        msg_ft_tried;
+
+static void
+msg_ft_init (void)
+{
+  if (msg_ft_tried)
+    return;
+  msg_ft_tried = 1;              /* one attempt; a missing font stays missing */
+
+  if (FT_Init_FreeType (&msg_ft_library) != 0)
+    return;
+  if (FT_New_Face (msg_ft_library, PSPLASH_MSG_FONT_PATH, 0, &msg_ft_face) != 0)
+    return;
+  if (FT_Set_Pixel_Sizes (msg_ft_face, 0, PSPLASH_MSG_FONT_SIZE) != 0)
+    return;
+  msg_ft_ready = 1;
+}
+
+/* Decodes the next UTF-8 codepoint at *s, advances *s past it. Invalid
+ * sequences are treated as a single Latin-1 byte - never crashes, worst
+ * case shows a wrong glyph. */
+static uint32_t
+msg_utf8_next (const char **s)
+{
+  const unsigned char *p = (const unsigned char *)*s;
+  uint32_t cp;
+  int extra;
+
+  if (p[0] < 0x80) { cp = p[0]; extra = 0; }
+  else if ((p[0] & 0xE0) == 0xC0) { cp = p[0] & 0x1F; extra = 1; }
+  else if ((p[0] & 0xF0) == 0xE0) { cp = p[0] & 0x0F; extra = 2; }
+  else if ((p[0] & 0xF8) == 0xF0) { cp = p[0] & 0x07; extra = 3; }
+  else { *s = (const char *)(p + 1); return p[0]; }
+
+  p++;
+  while (extra-- > 0 && (p[0] & 0xC0) == 0x80) {
+    cp = (cp << 6) | (p[0] & 0x3F);
+    p++;
+  }
+  *s = (const char *)p;
+  return cp;
+}
+
+static int
+msg_measure (const char *start, size_t len)
+{
+  const char *s = start, *end = start + len;
+  int width = 0;
+  FT_UInt prev = 0;
+  int has_kerning = FT_HAS_KERNING (msg_ft_face);
+
+  while (s < end) {
+    uint32_t cp = msg_utf8_next (&s);
+    FT_UInt glyph = FT_Get_Char_Index (msg_ft_face, cp);
+
+    if (has_kerning && prev && glyph) {
+      FT_Vector delta;
+      FT_Get_Kerning (msg_ft_face, prev, glyph, FT_KERNING_DEFAULT, &delta);
+      width += (int)(delta.x >> 6);
+    }
+    if (FT_Load_Glyph (msg_ft_face, glyph, FT_LOAD_DEFAULT) == 0)
+      width += (int)(msg_ft_face->glyph->advance.x >> 6);
+    prev = glyph;
+  }
+  return width;
+}
+
+/* Glyph coverage is blended against PSPLASH_BACKGROUND_COLOR, which the
+ * text area is always cleared to, so the framebuffer is never read back. */
+static void
+msg_draw_run (PSplashFB *fb, const char *start, size_t len, int x, int y)
+{
+  static const uint8 bg[3] = { PSPLASH_BACKGROUND_COLOR };
+  static const uint8 fg[3] = { PSPLASH_TEXT_COLOR };
+  const char *s = start, *end = start + len;
+  FT_UInt prev = 0;
+  int has_kerning = FT_HAS_KERNING (msg_ft_face);
+  int pen_x = x;
+
+  while (s < end) {
+    uint32_t cp = msg_utf8_next (&s);
+    FT_UInt glyph = FT_Get_Char_Index (msg_ft_face, cp);
+    FT_GlyphSlot slot;
+    int row, col;
+
+    if (has_kerning && prev && glyph) {
+      FT_Vector delta;
+      FT_Get_Kerning (msg_ft_face, prev, glyph, FT_KERNING_DEFAULT, &delta);
+      pen_x += (int)(delta.x >> 6);
+    }
+    if (FT_Load_Glyph (msg_ft_face, glyph, FT_LOAD_RENDER) != 0) {
+      prev = glyph;
+      continue;
+    }
+    slot = msg_ft_face->glyph;
+    for (row = 0; row < (int)slot->bitmap.rows; row++) {
+      for (col = 0; col < (int)slot->bitmap.width; col++) {
+	uint8_t coverage = slot->bitmap.buffer[row * slot->bitmap.pitch + col];
+	if (coverage == 0)
+	  continue;
+	psplash_fb_plot_pixel (fb,
+	  pen_x + slot->bitmap_left + col,
+	  y - slot->bitmap_top + row,
+	  bg[0] + ((fg[0] - bg[0]) * coverage) / 255,
+	  bg[1] + ((fg[1] - bg[1]) * coverage) / 255,
+	  bg[2] + ((fg[2] - bg[2]) * coverage) / 255);
+      }
+    }
+    pen_x += (int)(slot->advance.x >> 6);
+    prev = glyph;
+  }
+}
+
+/* Greedy word-wrap: pack space-separated words into lines no wider than
+ * max_width. Breaks only between words; a single word wider than max_width
+ * gets a line of its own and overflows it. */
+static int
+msg_wrap (const char *msg, int max_width,
+	  struct msg_word lines[MSG_MAX_LINES][MSG_MAX_WORDS],
+	  int line_word_count[MSG_MAX_LINES], int space_width)
+{
+  const char *s = msg;
+  int line = 0, line_width = 0;
+
+  line_word_count[0] = 0;
+  while (*s && line < MSG_MAX_LINES) {
+    const char *word_start;
+    int word_width;
+
+    while (*s == ' ')
+      s++;
+    if (!*s)
+      break;
+    word_start = s;
+    while (*s && *s != ' ')
+      s++;
+
+    word_width = msg_measure (word_start, (size_t)(s - word_start));
+
+    if (line_word_count[line] > 0 &&
+	line_width + space_width + word_width > max_width) {
+      line++;
+      if (line >= MSG_MAX_LINES)
+	break;
+      line_word_count[line] = 0;
+      line_width = 0;
+    }
+    if (line_word_count[line] >= MSG_MAX_WORDS)
+      continue;
+
+    lines[line][line_word_count[line]].start = word_start;
+    lines[line][line_word_count[line]].len = (size_t)(s - word_start);
+    lines[line][line_word_count[line]].width = word_width;
+    line_width += (line_word_count[line] > 0 ? space_width : 0) + word_width;
+    line_word_count[line]++;
+  }
+
+  return (line_word_count[0] > 0 || line > 0) ? line + 1 : 0;
+}
+
+static void
+psplash_draw_msg_ft (PSplashFB *fb, const char *msg)
+{
+  struct msg_word lines[MSG_MAX_LINES][MSG_MAX_WORDS];
+  int line_word_count[MSG_MAX_LINES];
+  int line_count, i, space_width, max_width, line_height, w, h;
+  int area_top, text_top;
+
+  FT_Load_Char (msg_ft_face, ' ', FT_LOAD_DEFAULT);
+  space_width = (int)(msg_ft_face->glyph->advance.x >> 6);
+  line_height = (int)(msg_ft_face->size->metrics.height >> 6);
+  max_width = fb->width * PSPLASH_MSG_MAX_WIDTH_PERCENT / 100;
+
+  line_count = msg_wrap (msg, max_width, lines, line_word_count, space_width);
+
+  w = 0;
+  for (i = 0; i < line_count; i++) {
+    int lw = 0, j;
+    for (j = 0; j < line_word_count[i]; j++)
+      lw += (j > 0 ? space_width : 0) + lines[i][j].width;
+    if (lw > w)
+      w = lw;
+  }
+  h = line_count > 0 ? line_count * line_height : line_height;
+
+  DBG("displaying '%s' %ix%i over %i line(s)\n", msg, w, h, line_count);
+
+  /* The text area runs from below the logo down to the split line, and the
+   * text is centred vertically within it. If the text is taller than that
+   * gap it sits directly above the split line and overlaps the logo. */
+#if defined(PSPLASH_MSG_TOP_NUMERATOR) && defined(PSPLASH_MSG_TOP_DENOMINATOR)
+  area_top = fb->height * PSPLASH_MSG_TOP_NUMERATOR
+	     / PSPLASH_MSG_TOP_DENOMINATOR;
+#else
+  area_top = LOGO_POS_Y(fb) + POKY_IMG_HEIGHT;
+#endif
+  if (area_top > SPLIT_LINE_POS(fb) - h)
+    area_top = SPLIT_LINE_POS(fb) - h;
+  text_top = area_top + (SPLIT_LINE_POS(fb) - area_top - h) / 2;
+
+  /* Clear the whole area, so a short message leaves nothing behind of a
+   * longer one before it. */
+  psplash_fb_draw_rect (fb,
+			0,
+			area_top,
+			fb->width,
+			SPLIT_LINE_POS(fb) - area_top,
+			PSPLASH_BACKGROUND_COLOR);
+
+  for (i = 0; i < line_count; i++) {
+    int lw = 0, j, pen_x;
+    int baseline_y = text_top + (i + 1) * line_height;
+
+    for (j = 0; j < line_word_count[i]; j++)
+      lw += (j > 0 ? space_width : 0) + lines[i][j].width;
+    pen_x = (fb->width - lw) / 2;
+
+    for (j = 0; j < line_word_count[i]; j++) {
+      msg_draw_run (fb, lines[i][j].start, lines[i][j].len, pen_x, baseline_y);
+      pen_x += lines[i][j].width + space_width;
+    }
+  }
+}
+#endif /* HAVE_FREETYPE */
+
+/* Single-line rendering in the compiled-in bitmap font: used without
+ * FreeType, and when the scalable font cannot be loaded. */
+static void
+psplash_draw_msg_bitmap (PSplashFB *fb, const char *msg)
 {
   int w, h;
 
   psplash_fb_text_size (&w, &h, &FONT_DEF, msg);
 
-  DBG("displaying '%s' %ix%i\n", msg, w, h);
-
-  /* Clear */
-
-  psplash_fb_draw_rect (fb, 
-			0, 
-			SPLIT_LINE_POS(fb) - h, 
-			fb->width,
-			h,
+  psplash_fb_draw_rect (fb, 0, SPLIT_LINE_POS(fb) - h, fb->width, h,
 			PSPLASH_BACKGROUND_COLOR);
+  psplash_fb_draw_text (fb, (fb->width - w) / 2, SPLIT_LINE_POS(fb) - h,
+			PSPLASH_TEXT_COLOR, &FONT_DEF, msg);
+}
 
-  psplash_fb_draw_text (fb,
-			(fb->width-w)/2, 
-			SPLIT_LINE_POS(fb) - h,
-			PSPLASH_TEXT_COLOR,
-			&FONT_DEF,
-			msg);
+void
+psplash_draw_msg (PSplashFB *fb, const char *msg)
+{
+#ifdef HAVE_FREETYPE
+  msg_ft_init ();
+  if (msg_ft_ready)
+    {
+      psplash_draw_msg_ft (fb, msg);
+      return;
+    }
+#endif
+
+  psplash_draw_msg_bitmap (fb, msg);
 }
 
 #ifdef PSPLASH_SHOW_PROGRESS_BAR
@@ -112,10 +377,10 @@ parse_command (PSplashFB *fb, char *string)
 
   if (!strcmp(command,"MSG"))
     {
+      /* A bare "MSG" (no text) clears the message area. */
       char *arg = strtok(NULL, "\0");
 
-      if (arg)
-        psplash_draw_msg (fb, arg);
+      psplash_draw_msg (fb, arg ? arg : "");
     } 
  #ifdef PSPLASH_SHOW_PROGRESS_BAR
   else  if (!strcmp(command,"PROGRESS"))
@@ -305,12 +570,7 @@ main (int argc, char** argv)
   /* Draw the Poky logo  */
   psplash_fb_draw_image (fb, 
 			 (fb->width  - POKY_IMG_WIDTH)/2, 
-#if PSPLASH_IMG_FULLSCREEN
-			 (fb->height - POKY_IMG_HEIGHT)/2,
-#else
-			 (fb->height * PSPLASH_IMG_SPLIT_NUMERATOR
-			  / PSPLASH_IMG_SPLIT_DENOMINATOR - POKY_IMG_HEIGHT)/2,
-#endif
+			 LOGO_POS_Y(fb),
 			 POKY_IMG_WIDTH,
 			 POKY_IMG_HEIGHT,
 			 POKY_IMG_BYTES_PER_PIXEL,
