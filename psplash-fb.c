@@ -60,6 +60,10 @@ psplash_fb_flip(PSplashFB *fb, int sync)
     if (sync) {
       memcpy(fb->bdata, fb->fdata, fb->stride * fb->real_height);
     }
+  } else if (fb->bdata != fb->data) {
+    /* No hardware page-flip: copy the composed frame from the shadow buffer
+     * to the display in one go. */
+    memcpy(fb->data, fb->bdata, fb->stride * fb->real_height);
   }
 }
 
@@ -68,6 +72,11 @@ psplash_fb_destroy (PSplashFB *fb)
 {
   if (fb->fd >= 0)
     close (fb->fd);
+
+  /* bdata is a malloc'd shadow buffer only on the single-buffered path; when
+   * double buffering it points into the mmap'd framebuffer. */
+  if (!fb->double_buffering && fb->bdata && fb->bdata != fb->data)
+    free(fb->bdata);
 
   free(fb);
 }
@@ -299,8 +308,13 @@ psplash_fb_new (int angle, int fbdev_id)
       fb->bdata = fb->data;
     }
   } else {
+    /* No hardware page-flipping: compose frames in a shadow buffer, which
+     * psplash_fb_flip() copies to the display, so a partly drawn frame is
+     * never visible. */
     fb->fdata = fb->data;
-    fb->bdata = fb->data;
+    fb->bdata = malloc(fb->stride * fb->real_height);
+    if (fb->bdata == NULL)
+      fb->bdata = fb->data;  /* OOM: fall back to direct rendering */
   }
 
 #if 0
