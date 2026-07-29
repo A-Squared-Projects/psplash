@@ -66,6 +66,14 @@ AS_IF([test "x$enable_progress_bar" = "xno"], [
     EXTRA_GCC_FLAGS="$EXTRA_GCC_FLAGS -DPSPLASH_DISABLE_PROGRESS_BAR"
 ])
 
+AC_ARG_ENABLE([bar-animation],
+    AS_HELP_STRING([--disable-bar-animation], [Disable progress bar animation while no progress is reported]),
+    [enable_bar_animation=$enableval],
+    [enable_bar_animation=yes])
+AS_IF([test "x$enable_bar_animation" = "xno"], [
+    EXTRA_GCC_FLAGS="$EXTRA_GCC_FLAGS -DPSPLASH_DISABLE_BAR_ANIMATION"
+])
+
 AC_ARG_ENABLE([img-fullscreen],
     AS_HELP_STRING([--enable-img-fullscreen], [Enable the logo image in fullscreen mode)]),
     [enable_img_fullscreen=$enableval],

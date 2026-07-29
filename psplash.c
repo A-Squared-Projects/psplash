@@ -327,16 +327,91 @@ psplash_draw_msg (PSplashFB *fb, const char *msg)
 }
 
 #ifdef PSPLASH_SHOW_PROGRESS_BAR
+/* The fillable part of the bar: the bar image less a 4px border. */
+static void
+psplash_progress_geometry (PSplashFB *fb, int *x, int *y,
+			   int *width, int *height)
+{
+  *x      = ((fb->width - BAR_IMG_WIDTH) / 2) + 4;
+  *y      = SPLIT_LINE_POS(fb) + 4;
+  *width  = BAR_IMG_WIDTH - 8;
+  *height = BAR_IMG_HEIGHT - 8;
+}
+#endif /* PSPLASH_SHOW_PROGRESS_BAR */
+
+#ifdef PSPLASH_ANIMATE_BAR
+/* Idle animation. After PSPLASH_BAR_ANIMATION_IDLE_MS with no command, a
+ * glint sweeps through the filled part of the bar, so a long step that sends
+ * no PROGRESS does not look like a hung boot. The next command stops it and
+ * redraws the real state. */
+#define SHIMMER_FRAME_MS       40  /* ~25fps */
+#define SHIMMER_GLINT_PM      380  /* glint width, per mille of the fill */
+#define SHIMMER_START_PM     (-320) /* left edge of travel, per mille */
+#define SHIMMER_END_PM       1000  /* right edge of travel, per mille */
+#define SHIMMER_GLOW_PX         6  /* glow past the glint's edge */
+
+static int  shimmer_value  = -1;   /* last PROGRESS seen; -1 = none yet */
+static int  shimmer_phase;
+static int  shimmer_active;
+
+static void
+shimmer_begin (void)
+{
+  shimmer_phase  = 0;
+  shimmer_active = 1;
+}
+
+/* Ease-in-out over [0,255]: slow at the turns and quick through the middle,
+ * so it reads as a scanner rather than a metronome. */
+static int
+shimmer_ease (int t)
+{
+  if (t < 128)
+    return (2 * t * t) / 255;
+
+  t = 255 - t;
+  return 255 - (2 * t * t) / 255;
+}
+
+static void
+shimmer_frame (PSplashFB *fb)
+{
+  int x, y, width, height, barwidth;
+  int elapsed, t, eased, pos;
+
+  psplash_progress_geometry (fb, &x, &y, &width, &height);
+  barwidth = (CLAMP(shimmer_value, 0, 100) * width) / 100;
+
+  /* Two eased half-sweeps per period: out, then back. */
+  elapsed = (shimmer_phase * SHIMMER_FRAME_MS)
+	    % PSPLASH_BAR_ANIMATION_PERIOD_MS;
+  t = (elapsed % (PSPLASH_BAR_ANIMATION_PERIOD_MS / 2)) * 255
+      / (PSPLASH_BAR_ANIMATION_PERIOD_MS / 2);
+  eased = shimmer_ease (t);
+  if (elapsed >= PSPLASH_BAR_ANIMATION_PERIOD_MS / 2)
+    eased = 255 - eased;
+
+  pos = SHIMMER_START_PM
+	+ ((SHIMMER_END_PM - SHIMMER_START_PM) * eased) / 255;
+
+  psplash_fb_draw_scanner (fb, x, y, width, height, barwidth,
+			   pos, SHIMMER_GLINT_PM, SHIMMER_GLOW_PX);
+  psplash_fb_flip (fb, 0);
+  shimmer_phase++;
+}
+#endif /* PSPLASH_ANIMATE_BAR */
+
+#ifdef PSPLASH_SHOW_PROGRESS_BAR
 void
 psplash_draw_progress (PSplashFB *fb, int value)
 {
   int x, y, width, height, barwidth;
 
-  /* 4 pix border */
-  x      = ((fb->width  - BAR_IMG_WIDTH)/2) + 4 ;
-  y      = SPLIT_LINE_POS(fb) + 4;
-  width  = BAR_IMG_WIDTH - 8; 
-  height = BAR_IMG_HEIGHT - 8;
+#ifdef PSPLASH_ANIMATE_BAR
+  shimmer_value = value;
+#endif
+
+  psplash_progress_geometry (fb, &x, &y, &width, &height);
 
   if (value > 0)
     {
@@ -369,7 +444,12 @@ parse_command (PSplashFB *fb, char *string)
   char *command;
 
   DBG("got cmd %s", string);
-	
+
+#ifdef PSPLASH_ANIMATE_BAR
+  /* Any command stops the animation: what it draws is the real state. */
+  shimmer_active = 0;
+#endif
+
   if (strcmp(string,"QUIT") == 0)
     return 1;
 
@@ -412,29 +492,61 @@ psplash_main (PSplashFB *fb, int pipe_fd, int timeout)
   char          *cmd;
   char           command[2048];
 
-  tv.tv_sec = timeout;
-  tv.tv_usec = 0;
-
-  FD_ZERO(&descriptors);
-  FD_SET(pipe_fd, &descriptors);
-
   end = command;
 
   while (1) 
     {
-      if (timeout != 0) 
+      FD_ZERO(&descriptors);
+      FD_SET(pipe_fd, &descriptors);
+
+#ifdef PSPLASH_ANIMATE_BAR
+      /* Wait only as long as the next thing we owe the display: a frame if
+       * already animating, otherwise the quiet period that starts one. The
+       * animation needs a PROGRESS value to sweep through. */
+      if (shimmer_active)
+	{
+	  tv.tv_sec  = 0;
+	  tv.tv_usec = SHIMMER_FRAME_MS * 1000;
+	}
+      else if (shimmer_value > 0)
+	{
+	  tv.tv_sec  = PSPLASH_BAR_ANIMATION_IDLE_MS / 1000;
+	  tv.tv_usec = (PSPLASH_BAR_ANIMATION_IDLE_MS % 1000) * 1000;
+	}
+      else
+	{
+	  tv.tv_sec  = timeout;
+	  tv.tv_usec = 0;
+	}
+
+      err = select(pipe_fd+1, &descriptors, NULL, NULL,
+		   (shimmer_active || shimmer_value > 0 || timeout != 0)
+		     ? &tv : NULL);
+
+      if (err == 0)
+	{
+	  /* No command in time: draw the next frame, starting if need be. */
+	  if (!shimmer_active)
+	    shimmer_begin ();
+
+	  shimmer_frame (fb);
+	  continue;
+	}
+
+      if (err < 0)
+	return;
+#else
+      tv.tv_sec = timeout;
+      tv.tv_usec = 0;
+
+      if (timeout != 0)
 	err = select(pipe_fd+1, &descriptors, NULL, NULL, &tv);
       else
 	err = select(pipe_fd+1, &descriptors, NULL, NULL, NULL);
-      
-      if (err <= 0) 
-	{
-	  /*
-	  if (errno == EINTR)
-	    continue;
-	  */
-	  return;
-	}
+
+      if (err <= 0)
+	return;
+#endif
       
       ret = read (pipe_fd, end, sizeof(command) - (end - command));
 
@@ -474,13 +586,9 @@ psplash_main (PSplashFB *fb, int pipe_fd, int timeout)
       } while (length);
 
     out:
+      /* The descriptor set and the timeout are recomputed at the top of the
+       * loop, which also covers the pipe having been reopened above. */
       end = &command[length];
-    
-      tv.tv_sec = timeout;
-      tv.tv_usec = 0;
-      
-      FD_ZERO(&descriptors);
-      FD_SET(pipe_fd,&descriptors);
     }
 
   return;

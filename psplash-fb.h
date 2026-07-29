@@ -55,6 +55,23 @@ psplash_fb_destroy (PSplashFB *fb);
 PSplashFB*
 psplash_fb_new (int angle, int fbdev_id);
 
+/* Draw a determinate bar of `barwidth` filled pixels with a "cylon" scanner
+ * glint bouncing through the filled region. `pos_permille`
+ * is the glint's left edge and `glint_permille` its width, both in tenths of a
+ * percent of the FILLED width - so the glint rescales with the bar, and may sit
+ * partly outside it at either end, where it is clipped. Leaves the unfilled
+ * remainder as background, so the progress value stays readable. */
+void
+psplash_fb_draw_scanner (PSplashFB *fb,
+			 int        x,
+			 int        y,
+			 int        width,
+			 int        height,
+			 int        barwidth,
+			 int        pos_permille,
+			 int        glint_permille,
+			 int        glow_px);
+
 void
 psplash_fb_draw_rect (PSplashFB    *fb, 
 		      int          x, 

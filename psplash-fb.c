@@ -9,6 +9,7 @@
 
 #include <endian.h>
 #include "psplash.h"
+#include "psplash-colors.h"
 
 static void
 psplash_wait_for_vsync(PSplashFB *fb)
@@ -488,6 +489,117 @@ psplash_fb_draw_rect (PSplashFB    *fb,
   for (dy=0; dy < height; dy++)
     for (dx=0; dx < width; dx++)
 	psplash_fb_plot_pixel (fb, x+dx, y+dy, red, green, blue);
+}
+
+/* Progress bar with a "cylon" scanner glint bouncing through the filled
+ * region.
+ *
+ * The glint is confined to the filled part, so the bar still shows how far the
+ * boot actually got - the animation says "still working", not "progress
+ * unknown" - and nothing jumps when progress resumes. Its width is a fraction
+ * of the fill, so it rescales as the bar grows with no separate logic.
+ *
+ * `pos_permille` is where the glint's left edge sits, in tenths of a percent of
+ * the filled width, and may be negative or past the end: the glint sweeps out
+ * of view at both ends and is clipped, so it never appears to bounce off
+ * invisible walls short of the edges.
+ *
+ * Brightness profile: full brightness at the centre, easing to the bar colour
+ * by half the radius, then fading out to nothing by the edge, with a short
+ * low-alpha glow past the edge. Colours derive from PSPLASH_BAR_COLOR so the
+ * animation follows the theme.
+ */
+void
+psplash_fb_draw_scanner (PSplashFB *fb,
+			 int        x,
+			 int        y,
+			 int        width,
+			 int        height,
+			 int        barwidth,
+			 int        pos_permille,
+			 int        glint_permille,
+			 int        glow_px)
+{
+  static const uint8 base[3] = { PSPLASH_BAR_COLOR };
+  uint8 peak[3];
+  int   c, dx, dy, glint_w, left, half;
+
+  for (c = 0; c < 3; c++)
+    {
+      int v = base[c] + ((255 - base[c]) * 3) / 4;
+      peak[c] = v > 255 ? 255 : (uint8) v;
+    }
+
+  if (barwidth > width) barwidth = width;
+  if (barwidth < 0)     barwidth = 0;
+
+  if (barwidth < width)
+    psplash_fb_draw_rect (fb, x + barwidth, y, width - barwidth, height,
+			  PSPLASH_BAR_BACKGROUND_COLOR);
+  if (barwidth > 0)
+    psplash_fb_draw_rect (fb, x, y, barwidth, height, PSPLASH_BAR_COLOR);
+
+  if (barwidth <= 0)
+    return;
+
+  glint_w = (barwidth * glint_permille) / 1000;
+  if (glint_w < 2)
+    return;
+
+  left = (barwidth * pos_permille) / 1000;
+  half = glint_w / 2;
+
+  for (dx = 0; dx < barwidth; dx++)
+    {
+      int  d = dx - (left + half);         /* signed distance from the centre */
+      int  ad = d < 0 ? -d : d;
+      int  alpha, i;
+      uint8 col[3];
+
+      if (ad <= half / 2)
+	{
+	  /* Core: peak easing to the bar colour by half the radius. */
+	  int t = half ? (ad * 255) / (half / 2 ? half / 2 : 1) : 0;
+
+	  if (t > 255) t = 255;
+	  for (i = 0; i < 3; i++)
+	    col[i] = (uint8) ((peak[i] * (255 - t) + base[i] * t) / 255);
+	  alpha = 255;
+	}
+      else if (ad <= half)
+	{
+	  /* Falloff: bar colour fading out to nothing by the edge. */
+	  int span = half - half / 2;
+
+	  for (i = 0; i < 3; i++)
+	    col[i] = base[i];
+	  alpha = span ? 255 - ((ad - half / 2) * 255) / span : 0;
+	}
+      else if (ad <= half + glow_px)
+	{
+	  /* Glow tail past the edge. */
+	  for (i = 0; i < 3; i++)
+	    col[i] = peak[i];
+	  alpha = glow_px ? (90 * (half + glow_px - ad)) / glow_px : 0;
+	}
+      else
+	continue;
+
+      if (alpha <= 0)
+	continue;
+
+      for (dy = 0; dy < height; dy++)
+	{
+	  /* Ellipse rather than a bar: dim the top and bottom rows a little. */
+	  int edge = (dy == 0 || dy == height - 1) ? (alpha * 3) / 5 : alpha;
+	  uint8 out[3];
+
+	  for (i = 0; i < 3; i++)
+	    out[i] = (uint8) ((col[i] * edge + base[i] * (255 - edge)) / 255);
+
+	  psplash_fb_plot_pixel (fb, x + dx, y + dy, out[0], out[1], out[2]);
+	}
+    }
 }
 
 void

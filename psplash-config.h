@@ -26,6 +26,21 @@
 #define PSPLASH_SHOW_PROGRESS_BAR 1
 #endif
 
+/* Bool indicating if the progress bar animates while no command arrives */
+#if defined(PSPLASH_SHOW_PROGRESS_BAR) && !defined(PSPLASH_DISABLE_BAR_ANIMATION)
+#define PSPLASH_ANIMATE_BAR 1
+#endif
+
+/* Milliseconds without a command before the progress bar starts to animate */
+#ifndef PSPLASH_BAR_ANIMATION_IDLE_MS
+#define PSPLASH_BAR_ANIMATION_IDLE_MS 1000
+#endif
+
+/* Milliseconds for one there-and-back sweep of the progress bar animation */
+#ifndef PSPLASH_BAR_ANIMATION_PERIOD_MS
+#define PSPLASH_BAR_ANIMATION_PERIOD_MS 1600
+#endif
+
 /* Position of the image split from top edge, numerator of fraction */
 #define PSPLASH_IMG_SPLIT_NUMERATOR 5
 
