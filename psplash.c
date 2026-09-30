@@ -358,8 +358,9 @@ psplash_progress_geometry (PSplashFB *fb, int *x, int *y,
 #ifdef PSPLASH_ANIMATE_BAR
 /* Idle animation. After PSPLASH_BAR_ANIMATION_IDLE_MS with no command, a
  * glint sweeps through the filled part of the bar, so a long step that sends
- * no PROGRESS does not look like a hung boot. The next command stops it and
- * redraws the real state.
+ * no PROGRESS does not look like a hung boot. Only a change of percentage
+ * stops it and redraws the bar; the glint carries on, where it was, through
+ * anything that leaves the bar as it is.
  *
  * While animating, psplash also watches for something else drawing to the
  * display, and quits when it does. When the animation starts it snapshots
@@ -381,8 +382,11 @@ static int  shimmer_active;
 static int  shimmer_off[SHIMMER_SAMPLES];
 static char shimmer_snap[SHIMMER_SAMPLES];
 
+/* Snapshot the watched pixels as they are now. Taken when the animation
+ * starts, and again after psplash itself redraws something near the bar, so
+ * its own drawing is never mistaken for a takeover. */
 static void
-shimmer_begin (PSplashFB *fb)
+shimmer_snapshot (PSplashFB *fb)
 {
   int x, y, width, height, i;
 
@@ -397,7 +401,12 @@ shimmer_begin (PSplashFB *fb)
       shimmer_off[i] = psplash_fb_pixel_offset (fb, sx, sy);
       shimmer_snap[i] = (shimmer_off[i] >= 0) ? fb->fdata[shimmer_off[i]] : 0;
     }
+}
 
+static void
+shimmer_begin (PSplashFB *fb)
+{
+  shimmer_snapshot (fb);
   shimmer_phase  = 0;
   shimmer_active = 1;
 }
@@ -499,11 +508,6 @@ parse_command (PSplashFB *fb, char *string)
 
   DBG("got cmd %s", string);
 
-#ifdef PSPLASH_ANIMATE_BAR
-  /* Any command stops the animation: what it draws is the real state. */
-  shimmer_active = 0;
-#endif
-
   if (strcmp(string,"QUIT") == 0)
     return 1;
 
@@ -514,20 +518,42 @@ parse_command (PSplashFB *fb, char *string)
       /* A bare "MSG" (no text) clears the message area. */
       char *arg = strtok(NULL, "\0");
 
+      /* The text is not the bar: the animation carries on through it. */
       psplash_draw_msg (fb, arg ? arg : "");
+      psplash_fb_flip(fb, 0);
+#ifdef PSPLASH_ANIMATE_BAR
+      if (shimmer_active)
+	shimmer_snapshot (fb);
+#endif
+      return 0;
     } 
  #ifdef PSPLASH_SHOW_PROGRESS_BAR
   else  if (!strcmp(command,"PROGRESS"))
     {
       char *arg = strtok(NULL, "\0");
 
-      if (arg)
-        psplash_draw_progress (fb, atoi(arg));
+      if (!arg)
+	return 0;
+#ifdef PSPLASH_ANIMATE_BAR
+      /* Only a new percentage changes the bar, so only that stops the
+       * animation to redraw it; the same value again changes nothing. */
+      if (atoi(arg) == shimmer_value)
+	return 0;
+      shimmer_active = 0;
+#endif
+      psplash_draw_progress (fb, atoi(arg));
     } 
 #endif
   else if (!strcmp(command,"QUIT")) 
     {
       return 1;
+    }
+  else
+    {
+      /* Not a command this splash knows - another splash implementation's,
+       * sent by a writer that cannot tell which is running. Nothing is drawn,
+       * so neither the animation nor the screen is disturbed. */
+      return 0;
     }
 
   psplash_fb_flip(fb, 0);
