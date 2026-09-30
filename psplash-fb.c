@@ -602,6 +602,33 @@ psplash_fb_draw_scanner (PSplashFB *fb,
     }
 }
 
+/* Physical byte offset of a logical (x, y), applying the same rotation as
+ * psplash_fb_plot_pixel. -1 if out of bounds. Lets the caller sample the
+ * VISIBLE buffer (fb->fdata) to notice someone else drawing to the display. */
+int
+psplash_fb_pixel_offset (PSplashFB *fb, int x, int y)
+{
+  switch (fb->angle)
+    {
+    case 270:
+      { int t = x; x = fb->width - y - 1; y = t; break; }
+    case 180:
+      x = fb->width  - x - 1;
+      y = fb->height - y - 1;
+      break;
+    case 90:
+      { int t = x; x = y; y = fb->height - t - 1; break; }
+    case 0:
+    default:
+      break;
+    }
+
+  if (x < 0 || x >= fb->real_width || y < 0 || y >= fb->real_height)
+    return -1;
+
+  return (y * fb->stride) + (x * (fb->bpp >> 3));
+}
+
 void
 psplash_fb_draw_image (PSplashFB    *fb,
 		       int          x,

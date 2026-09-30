@@ -343,22 +343,60 @@ psplash_progress_geometry (PSplashFB *fb, int *x, int *y,
 /* Idle animation. After PSPLASH_BAR_ANIMATION_IDLE_MS with no command, a
  * glint sweeps through the filled part of the bar, so a long step that sends
  * no PROGRESS does not look like a hung boot. The next command stops it and
- * redraws the real state. */
+ * redraws the real state.
+ *
+ * While animating, psplash also watches for something else drawing to the
+ * display, and quits when it does. When the animation starts it snapshots
+ * pixels the animation never touches and quits as soon as any of them
+ * changes. It samples the VISIBLE buffer (fb->fdata), which is stable on the
+ * single-buffered shadow path; on a hardware page-flipped fb the first frame
+ * mismatches and psplash quits immediately, leaving a static bar rather than
+ * fighting for the display. */
 #define SHIMMER_FRAME_MS       40  /* ~25fps */
 #define SHIMMER_GLINT_PM      380  /* glint width, per mille of the fill */
 #define SHIMMER_START_PM     (-320) /* left edge of travel, per mille */
 #define SHIMMER_END_PM       1000  /* right edge of travel, per mille */
 #define SHIMMER_GLOW_PX         6  /* glow past the glint's edge */
+#define SHIMMER_SAMPLES         8  /* pixels watched for takeover */
 
 static int  shimmer_value  = -1;   /* last PROGRESS seen; -1 = none yet */
 static int  shimmer_phase;
 static int  shimmer_active;
+static int  shimmer_off[SHIMMER_SAMPLES];
+static char shimmer_snap[SHIMMER_SAMPLES];
 
 static void
-shimmer_begin (void)
+shimmer_begin (PSplashFB *fb)
 {
+  int x, y, width, height, i;
+
+  psplash_progress_geometry (fb, &x, &y, &width, &height);
+
+  /* Sample two rows clear of the bar, spread across its width. */
+  for (i = 0; i < SHIMMER_SAMPLES; i++)
+    {
+      int sx = x + (i * width) / SHIMMER_SAMPLES;
+      int sy = (i & 1) ? y - 3 : y + height + 2;
+
+      shimmer_off[i] = psplash_fb_pixel_offset (fb, sx, sy);
+      shimmer_snap[i] = (shimmer_off[i] >= 0) ? fb->fdata[shimmer_off[i]] : 0;
+    }
+
   shimmer_phase  = 0;
   shimmer_active = 1;
+}
+
+/* True once anything other than us has drawn to the display. */
+static int
+shimmer_taken_over (PSplashFB *fb)
+{
+  int i;
+
+  for (i = 0; i < SHIMMER_SAMPLES; i++)
+    if (shimmer_off[i] >= 0 && fb->fdata[shimmer_off[i]] != shimmer_snap[i])
+      return 1;
+
+  return 0;
 }
 
 /* Ease-in-out over [0,255]: slow at the turns and quick through the middle,
@@ -527,7 +565,9 @@ psplash_main (PSplashFB *fb, int pipe_fd, int timeout)
 	{
 	  /* No command in time: draw the next frame, starting if need be. */
 	  if (!shimmer_active)
-	    shimmer_begin ();
+	    shimmer_begin (fb);
+	  else if (shimmer_taken_over (fb))
+	    return;
 
 	  shimmer_frame (fb);
 	  continue;

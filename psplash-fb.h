@@ -72,6 +72,12 @@ psplash_fb_draw_scanner (PSplashFB *fb,
 			 int        glint_permille,
 			 int        glow_px);
 
+/* Physical byte offset in the framebuffer of a logical (x, y) pixel, applying
+ * the same rotation as psplash_fb_plot_pixel. Returns -1 if out of bounds.
+ * Used to sample the visible buffer (fb->fdata) for takeover detection. */
+int
+psplash_fb_pixel_offset (PSplashFB *fb, int x, int y);
+
 void
 psplash_fb_draw_rect (PSplashFB    *fb, 
 		      int          x, 
