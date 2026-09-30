@@ -23,6 +23,19 @@ psplash_fb_flip(PSplashFB *fb, int sync)
 {
   char *tmp;
 
+  /* Unblank after the first flip so the display pipeline activates with a
+   * fully-rendered frame already in the buffer. Only needed on kernels whose
+   * fbdev pipeline is dead until something issues FBIOBLANK. On
+   * a modern DRM stack the pipeline is already live (showing the kernel logo),
+   * and unblanking forces a redundant DPMS-on modeset that briefly blanks the
+   * panel - a black flash as psplash takes over. Gated on PSPLASH_UNBLANK,
+   * which the init scripts should set only on the kernels that need it. */
+  static int unblanked;
+  if (!unblanked && getenv("PSPLASH_UNBLANK")) {
+    ioctl(fb->fd, FBIOBLANK, FB_BLANK_UNBLANK);
+    unblanked = 1;
+  }
+
   if (fb->double_buffering) {
 
     /* Carry out the flip after a vsync */
