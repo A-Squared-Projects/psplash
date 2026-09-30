@@ -80,12 +80,28 @@ msg_ft_init (void)
     return;
   msg_ft_tried = 1;              /* one attempt; a missing font stays missing */
 
+  /* The bitmap font still renders the message, so say so on stderr when
+   * falling back to it - otherwise the only sign of a missing font is the
+   * glyphs looking different. */
   if (FT_Init_FreeType (&msg_ft_library) != 0)
-    return;
+    {
+      fprintf (stderr, "psplash: FreeType would not initialise, falling back"
+	       " to the built-in bitmap font\n");
+      return;
+    }
   if (FT_New_Face (msg_ft_library, PSPLASH_MSG_FONT_PATH, 0, &msg_ft_face) != 0)
-    return;
+    {
+      fprintf (stderr, "psplash: cannot open %s, falling back to the built-in"
+	       " bitmap font\n", PSPLASH_MSG_FONT_PATH);
+      return;
+    }
   if (FT_Set_Pixel_Sizes (msg_ft_face, 0, PSPLASH_MSG_FONT_SIZE) != 0)
-    return;
+    {
+      fprintf (stderr, "psplash: %s opened but %dpx was refused, falling back"
+	       " to the built-in bitmap font\n",
+	       PSPLASH_MSG_FONT_PATH, PSPLASH_MSG_FONT_SIZE);
+      return;
+    }
   msg_ft_ready = 1;
 }
 
