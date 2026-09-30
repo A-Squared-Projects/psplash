@@ -465,10 +465,30 @@ shimmer_frame (PSplashFB *fb)
 #endif /* PSPLASH_ANIMATE_BAR */
 
 #ifdef PSPLASH_SHOW_PROGRESS_BAR
+/* Set when the bar's frame has just been drawn. Updates after the first frame
+ * redraw only what changes, so on a double-buffered framebuffer the frame must
+ * reach both buffers: the next flip synchronises them. */
+static int bar_frame_resync;
+
 void
 psplash_draw_progress (PSplashFB *fb, int value)
 {
+  static int frame_drawn;
   int x, y, width, height, barwidth;
+
+  if (!frame_drawn)
+    {
+      psplash_fb_draw_image (fb,
+			     (fb->width  - BAR_IMG_WIDTH)/2,
+			     SPLIT_LINE_POS(fb),
+			     BAR_IMG_WIDTH,
+			     BAR_IMG_HEIGHT,
+			     BAR_IMG_BYTES_PER_PIXEL,
+			     BAR_IMG_ROWSTRIDE,
+			     BAR_IMG_RLE_PIXEL_DATA);
+      frame_drawn = 1;
+      bar_frame_resync = 1;
+    }
 
 #ifdef PSPLASH_ANIMATE_BAR
   shimmer_value = value;
@@ -556,7 +576,12 @@ parse_command (PSplashFB *fb, char *string)
       return 0;
     }
 
+#ifdef PSPLASH_SHOW_PROGRESS_BAR
+  psplash_fb_flip(fb, bar_frame_resync);
+  bar_frame_resync = 0;
+#else
   psplash_fb_flip(fb, 0);
+#endif
   return 0;
 }
 
@@ -767,19 +792,10 @@ main (int argc, char** argv)
 			 POKY_IMG_ROWSTRIDE,
 			 POKY_IMG_RLE_PIXEL_DATA);
 
-#ifdef PSPLASH_SHOW_PROGRESS_BAR
-  /* Draw progress bar border */
-  psplash_fb_draw_image (fb, 
-			 (fb->width  - BAR_IMG_WIDTH)/2, 
-			 SPLIT_LINE_POS(fb),
-			 BAR_IMG_WIDTH,
-			 BAR_IMG_HEIGHT,
-			 BAR_IMG_BYTES_PER_PIXEL,
-			 BAR_IMG_ROWSTRIDE,
-			 BAR_IMG_RLE_PIXEL_DATA);
-
-  psplash_draw_progress (fb, 0);
-#endif
+/* The progress bar is not drawn until the first PROGRESS: a splash started
+ * after the boot has already made progress would otherwise show an empty bar
+ * that then jumps, and one started when nothing reports progress at all would
+ * show a bar that never moves. See psplash_draw_progress(). */
 
 #ifdef PSPLASH_STARTUP_MSG
   psplash_draw_msg (fb, PSPLASH_STARTUP_MSG);
