@@ -125,4 +125,15 @@ psplash_fb_draw_text (PSplashFB         *fb,
 void
 psplash_fb_flip(PSplashFB *fb, int sync);
 
+/* The display's event source, for backends that have one: a descriptor to
+ * select() on alongside the FIFO, or -1 when there is nothing to wait for. */
+int
+psplash_fb_event_fd (PSplashFB *fb);
+
+/* Handle display events: those already queued, and with readable set, those
+ * waiting on the descriptor too. 0 to carry on, 1 when the display has asked
+ * the splash to end, and -1 when the display itself has gone away. */
+int
+psplash_fb_dispatch (PSplashFB *fb, int readable);
+
 #endif

@@ -11,6 +11,7 @@
 #include "psplash.h"
 #include "psplash-colors.h"
 
+#ifndef HAVE_WAYLAND
 static void
 psplash_wait_for_vsync(PSplashFB *fb)
 {
@@ -364,6 +365,19 @@ psplash_fb_new (int angle, int fbdev_id)
 
   return NULL;
 }
+
+int
+psplash_fb_event_fd (PSplashFB *UNUSED(fb))
+{
+  return -1;
+}
+
+int
+psplash_fb_dispatch (PSplashFB *UNUSED(fb), int UNUSED(readable))
+{
+  return 0;
+}
+#endif /* !HAVE_WAYLAND */
 
 #define OFFSET(fb,x,y) (((y) * (fb)->stride) + ((x) * ((fb)->bpp >> 3)))
 

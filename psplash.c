@@ -585,6 +585,21 @@ parse_command (PSplashFB *fb, char *string)
   return 0;
 }
 
+/* Set when the display went away underneath the splash, as opposed to the
+ * splash being told to end: a supervisor should restart the one and not the
+ * other, so the two exit differently. */
+static int display_lost;
+
+static int
+psplash_display_done (PSplashFB *fb, int readable)
+{
+  int r = psplash_fb_dispatch (fb, readable);
+
+  if (r < 0)
+    display_lost = 1;
+  return r != 0;
+}
+
 void 
 psplash_main (PSplashFB *fb, int pipe_fd, int timeout) 
 {
@@ -601,8 +616,22 @@ psplash_main (PSplashFB *fb, int pipe_fd, int timeout)
 
   while (1) 
     {
+      int display_fd = psplash_fb_event_fd (fb);
+      int max_fd = pipe_fd;
+
+      /* Anything the display sent while we were drawing is handled before
+       * waiting, including being told to end. */
+      if (psplash_display_done (fb, 0))
+	return;
+
       FD_ZERO(&descriptors);
       FD_SET(pipe_fd, &descriptors);
+      if (display_fd >= 0)
+	{
+	  FD_SET(display_fd, &descriptors);
+	  if (display_fd > max_fd)
+	    max_fd = display_fd;
+	}
 
 #ifdef PSPLASH_ANIMATE_BAR
       /* Wait only as long as the next thing we owe the display: a frame if
@@ -624,7 +653,7 @@ psplash_main (PSplashFB *fb, int pipe_fd, int timeout)
 	  tv.tv_usec = 0;
 	}
 
-      err = select(pipe_fd+1, &descriptors, NULL, NULL,
+      err = select(max_fd+1, &descriptors, NULL, NULL,
 		   (shimmer_active || shimmer_value > 0 || timeout != 0)
 		     ? &tv : NULL);
 
@@ -647,13 +676,22 @@ psplash_main (PSplashFB *fb, int pipe_fd, int timeout)
       tv.tv_usec = 0;
 
       if (timeout != 0)
-	err = select(pipe_fd+1, &descriptors, NULL, NULL, &tv);
+	err = select(max_fd+1, &descriptors, NULL, NULL, &tv);
       else
-	err = select(pipe_fd+1, &descriptors, NULL, NULL, NULL);
+	err = select(max_fd+1, &descriptors, NULL, NULL, NULL);
 
       if (err <= 0)
 	return;
 #endif
+
+      if (display_fd >= 0 && FD_ISSET(display_fd, &descriptors))
+	{
+	  if (psplash_display_done (fb, 1))
+	    return;
+	  if (!FD_ISSET(pipe_fd, &descriptors))
+	    continue;
+	}
+
       
       ret = read (pipe_fd, end, sizeof(command) - (end - command));
 
@@ -810,6 +848,8 @@ main (int argc, char** argv)
   psplash_fb_flip(fb, 1);
 
   psplash_main (fb, pipe_fd, 0);
+  if (display_lost)
+    ret = 1;
 
   psplash_fb_destroy (fb);
 

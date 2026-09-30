@@ -33,6 +33,22 @@ AC_ARG_WITH([msg-font],
 	    [PSPLASH_MSG_FONT_PATH="${datadir}/psplash/msg-font.ttf"])
 AC_SUBST(PSPLASH_MSG_FONT_PATH)
 
+AC_ARG_ENABLE([wayland],
+    AS_HELP_STRING([--enable-wayland], [Draw as a Wayland client on the compositor's background layer instead of on the framebuffer]),
+    [enable_wayland=$enableval],
+    [enable_wayland=no])
+AS_IF([test "x$enable_wayland" = "xyes"], [
+    PKG_CHECK_MODULES(WAYLAND, wayland-client)
+    PKG_CHECK_VAR(WAYLAND_PROTOCOLS_DIR, wayland-protocols, pkgdatadir)
+    AS_IF([test "x$WAYLAND_PROTOCOLS_DIR" = "x"],
+	  [AC_MSG_ERROR([wayland-protocols is required for --enable-wayland])])
+    AC_PATH_PROG(WAYLAND_SCANNER, wayland-scanner)
+    AS_IF([test "x$WAYLAND_SCANNER" = "x"],
+	  [AC_MSG_ERROR([wayland-scanner is required for --enable-wayland])])
+    EXTRA_GCC_FLAGS="$EXTRA_GCC_FLAGS -DHAVE_WAYLAND"
+])
+AM_CONDITIONAL([HAVE_WAYLAND], [test "x$enable_wayland" = "xyes"])
+
 AC_ARG_WITH([systemd], AS_HELP_STRING([--with-systemd], [Build with systemd
 	     support]))
 
