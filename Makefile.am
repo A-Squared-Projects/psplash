@@ -12,10 +12,10 @@ psplash_write_SOURCES = psplash-write.c psplash.h
 
 if HAVE_SYSTEMD
 psplash_CPPFLAGS = $(SYSTEMD_CFLAGS) -DHAVE_SYSTEMD
-psplash_LDFLAGS= $(SYSTEMD_LIBS)
+psplash_LDADD = $(SYSTEMD_LIBS)
 bin_PROGRAMS += psplash-systemd
 psplash_systemd_CPPFLAGS = $(SYSTEMD_CFLAGS)
-psplash_systemd_LDFLAGS= $(SYSTEMD_LIBS)
+psplash_systemd_LDADD = $(SYSTEMD_LIBS)
 psplash_systemd_SOURCES = psplash-systemd.c psplash.h
 endif
 
