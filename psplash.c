@@ -14,6 +14,9 @@
 #include "psplash-config.h"
 #include "psplash-colors.h"
 #include "psplash-poky-img.h"
+#ifdef HAVE_LOGO_BUNDLE
+#include "psplash-logo.h"
+#endif
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
@@ -36,12 +39,13 @@
 	)
 
 #if PSPLASH_IMG_FULLSCREEN
-#define LOGO_POS_Y(fb) (((fb)->height - POKY_IMG_HEIGHT) / 2)
+#define LOGO_POS_Y_FOR(fb, h) (((fb)->height - (h)) / 2)
 #else
-#define LOGO_POS_Y(fb)                                      \
+#define LOGO_POS_Y_FOR(fb, h)                               \
 	(((fb)->height * PSPLASH_IMG_SPLIT_NUMERATOR        \
-	  / PSPLASH_IMG_SPLIT_DENOMINATOR - POKY_IMG_HEIGHT) / 2)
+	  / PSPLASH_IMG_SPLIT_DENOMINATOR - (h)) / 2)
 #endif
+#define LOGO_POS_Y(fb) LOGO_POS_Y_FOR(fb, POKY_IMG_HEIGHT)
 
 void
 psplash_exit (int UNUSED(signum))
@@ -790,6 +794,24 @@ psplash_main (PSplashFB *fb, int pipe_fd, int timeout)
   return;
 }
 
+#ifdef HAVE_LOGO_BUNDLE
+/* The bundle's logo, centred where the built-in one would be. */
+static void
+psplash_draw_logo (PSplashFB *fb, const PSplashLogo *logo)
+{
+  int            x0 = (fb->width - logo->width) / 2;
+  int            y0 = LOGO_POS_Y_FOR(fb, logo->height);
+  int            x, y;
+  unsigned char *p = logo->rgb;
+
+  for (y = 0; y < logo->height; y++)
+    for (x = 0; x < logo->width; x++, p += 3)
+      if (x0 + x >= 0 && x0 + x < fb->width
+	  && y0 + y >= 0 && y0 + y < fb->height)
+	psplash_fb_plot_pixel (fb, x0 + x, y0 + y, p[0], p[1], p[2]);
+}
+#endif
+
 int 
 main (int argc, char** argv) 
 {
@@ -797,6 +819,9 @@ main (int argc, char** argv)
   int        pipe_fd, i = 0, angle = 0, fbdev_id = 0, ret = 0;
   PSplashFB *fb;
   bool       disable_console_switch = FALSE;
+#ifdef HAVE_LOGO_BUNDLE
+  PSplashLogo logo;
+#endif
 
   signal(SIGHUP, psplash_exit);
   signal(SIGINT, psplash_exit);
@@ -857,6 +882,11 @@ main (int argc, char** argv)
   if (!disable_console_switch)
     psplash_console_switch ();
 
+#ifdef HAVE_LOGO_BUNDLE
+  /* Read before the display is opened, so the first frame has the logo. */
+  psplash_logo_load (PSPLASH_LOGO_PARTITION, PSPLASH_LOGO_KEY, &logo);
+#endif
+
   if ((fb = psplash_fb_new(angle,fbdev_id)) == NULL)
     {
 	  ret = -1;
@@ -871,6 +901,11 @@ main (int argc, char** argv)
   psplash_fb_draw_rect (fb, 0, 0, fb->width, fb->height,
                         PSPLASH_BACKGROUND_COLOR);
 
+#ifdef HAVE_LOGO_BUNDLE
+  if (logo.rgb)
+    psplash_draw_logo (fb, &logo);
+  else
+#endif
   /* Draw the Poky logo  */
   psplash_fb_draw_image (fb, 
 			 (fb->width  - POKY_IMG_WIDTH)/2, 
@@ -905,6 +940,9 @@ main (int argc, char** argv)
   psplash_fb_destroy (fb);
 
  fb_fail:
+#ifdef HAVE_LOGO_BUNDLE
+  psplash_logo_free (&logo);
+#endif
   unlink(PSPLASH_FIFO);
 
   if (!disable_console_switch)

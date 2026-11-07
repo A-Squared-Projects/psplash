@@ -49,6 +49,39 @@ AS_IF([test "x$enable_wayland" = "xyes"], [
 ])
 AM_CONDITIONAL([HAVE_WAYLAND], [test "x$enable_wayland" = "xyes"])
 
+# A logo read at boot from a signed FIT bundle in a partition, drawn in
+# place of the built-in one when every hash matches and the signature
+# verifies against the public key at --with-logo-key. Anything else, and no
+# partition at all, draws the built-in logo.
+AC_ARG_ENABLE([logo-bundle],
+    AS_HELP_STRING([--enable-logo-bundle], [Draw the logo from a signed FIT bundle in a partition when it verifies]),
+    [enable_logo_bundle=$enableval],
+    [enable_logo_bundle=no])
+AC_ARG_WITH([logo-partition],
+	    AS_HELP_STRING([--with-logo-partition=NAME],
+			   [partition label holding the logo bundle (default logo)]),
+	    [PSPLASH_LOGO_PARTITION="$withval"],
+	    [PSPLASH_LOGO_PARTITION="logo"])
+AC_ARG_WITH([logo-key],
+	    AS_HELP_STRING([--with-logo-key=PATH],
+			   [runtime path to the PEM public key that signs logo bundles]),
+	    [PSPLASH_LOGO_KEY="$withval"],
+	    [PSPLASH_LOGO_KEY="${datadir}/psplash/logo-key.pem"])
+AS_IF([test "x$enable_logo_bundle" = "xyes"], [
+    PKG_CHECK_MODULES(LIBCRYPTO, libcrypto)
+    # libfdt ships a pkg-config file only from some builds of dtc.
+    PKG_CHECK_MODULES(LIBFDT, libfdt, [], [
+	AC_CHECK_HEADER([libfdt.h], [],
+			[AC_MSG_ERROR([libfdt is required for --enable-logo-bundle])])
+	AC_CHECK_LIB([fdt], [fdt_check_full], [LIBFDT_LIBS=-lfdt],
+		     [AC_MSG_ERROR([libfdt is required for --enable-logo-bundle])])
+    ])
+    EXTRA_GCC_FLAGS="$EXTRA_GCC_FLAGS -DHAVE_LOGO_BUNDLE"
+])
+AM_CONDITIONAL([HAVE_LOGO_BUNDLE], [test "x$enable_logo_bundle" = "xyes"])
+AC_SUBST(PSPLASH_LOGO_PARTITION)
+AC_SUBST(PSPLASH_LOGO_KEY)
+
 AC_ARG_WITH([systemd], AS_HELP_STRING([--with-systemd], [Build with systemd
 	     support]))
 

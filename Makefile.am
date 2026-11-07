@@ -11,6 +11,14 @@ BUILT_SOURCES = psplash-poky-img.h
 
 psplash_LDADD = $(FREETYPE_LIBS)
 
+if HAVE_LOGO_BUNDLE
+psplash_SOURCES += psplash-logo.c psplash-logo.h
+AM_CFLAGS += $(LIBFDT_CFLAGS) $(LIBCRYPTO_CFLAGS) \
+	     -DPSPLASH_LOGO_PARTITION=\"$(PSPLASH_LOGO_PARTITION)\" \
+	     -DPSPLASH_LOGO_KEY=\"$(PSPLASH_LOGO_KEY)\"
+psplash_LDADD += $(LIBFDT_LIBS) $(LIBCRYPTO_LIBS)
+endif
+
 psplash_write_SOURCES = psplash-write.c psplash.h
 
 if HAVE_WAYLAND
