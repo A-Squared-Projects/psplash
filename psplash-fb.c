@@ -9,7 +9,7 @@
 
 #include <endian.h>
 #include "psplash.h"
-#include "psplash-colors.h"
+#include "psplash-theme.h"
 
 #ifndef HAVE_WAYLAND
 static void
@@ -520,7 +520,7 @@ psplash_fb_draw_rect (PSplashFB    *fb,
  *
  * Brightness profile: full brightness at the centre, easing to the bar colour
  * by half the radius, then fading out to nothing by the edge, with a short
- * low-alpha glow past the edge. Colours derive from PSPLASH_BAR_COLOR so the
+ * low-alpha glow past the edge. Colours derive from the bar colour so the
  * animation follows the theme.
  */
 void
@@ -534,7 +534,7 @@ psplash_fb_draw_scanner (PSplashFB *fb,
 			 int        glint_permille,
 			 int        glow_px)
 {
-  static const uint8 base[3] = { PSPLASH_BAR_COLOR };
+  const uint8 *base = psplash_theme.bar;
   uint8 peak[3];
   int   c, dx, dy, glint_w, left, half;
 
@@ -549,9 +549,9 @@ psplash_fb_draw_scanner (PSplashFB *fb,
 
   if (barwidth < width)
     psplash_fb_draw_rect (fb, x + barwidth, y, width - barwidth, height,
-			  PSPLASH_BAR_BACKGROUND_COLOR);
+			  PSPLASH_RGB (psplash_theme.bar_background));
   if (barwidth > 0)
-    psplash_fb_draw_rect (fb, x, y, barwidth, height, PSPLASH_BAR_COLOR);
+    psplash_fb_draw_rect (fb, x, y, barwidth, height, PSPLASH_RGB (psplash_theme.bar));
 
   if (barwidth <= 0)
     return;

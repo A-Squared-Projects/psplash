@@ -6,6 +6,7 @@ AM_CFLAGS = $(GCC_FLAGS) $(EXTRA_GCC_FLAGS) -D_GNU_SOURCE -DFONT_HEADER=\"$(FONT
 psplash_SOURCES = psplash.c psplash.h psplash-fb.c psplash-fb.h \
                   psplash-console.c psplash-console.h           \
 		  psplash-colors.h psplash-config.h		\
+		  psplash-theme.c psplash-theme.h		\
 		  psplash-poky-img.h $(FONT_NAME)-font.h
 BUILT_SOURCES = psplash-poky-img.h
 

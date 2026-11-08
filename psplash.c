@@ -12,7 +12,7 @@
 
 #include "psplash.h"
 #include "psplash-config.h"
-#include "psplash-colors.h"
+#include "psplash-theme.h"
 #include "psplash-poky-img.h"
 #ifdef HAVE_LOGO_BUNDLE
 #include "psplash-logo.h"
@@ -157,13 +157,13 @@ msg_measure (const char *start, size_t len)
   return width;
 }
 
-/* Glyph coverage is blended against PSPLASH_BACKGROUND_COLOR, which the
+/* Glyph coverage is blended against the background colour, which the
  * text area is always cleared to, so the framebuffer is never read back. */
 static void
 msg_draw_run (PSplashFB *fb, const char *start, size_t len, int x, int y)
 {
-  static const uint8 bg[3] = { PSPLASH_BACKGROUND_COLOR };
-  static const uint8 fg[3] = { PSPLASH_TEXT_COLOR };
+  const uint8 *bg = psplash_theme.background;
+  const uint8 *fg = psplash_theme.text;
   const char *s = start, *end = start + len;
   FT_UInt prev = 0;
   int has_kerning = FT_HAS_KERNING (msg_ft_face);
@@ -280,12 +280,11 @@ psplash_draw_msg_ft (PSplashFB *fb, const char *msg)
   /* The text area runs from below the logo down to the split line, and the
    * text is centred vertically within it. If the text is taller than that
    * gap it sits directly above the split line and overlaps the logo. */
-#if defined(PSPLASH_MSG_TOP_NUMERATOR) && defined(PSPLASH_MSG_TOP_DENOMINATOR)
-  area_top = fb->height * PSPLASH_MSG_TOP_NUMERATOR
-	     / PSPLASH_MSG_TOP_DENOMINATOR;
-#else
-  area_top = LOGO_POS_Y(fb) + POKY_IMG_HEIGHT;
-#endif
+  if (psplash_theme.text_top_den > 0)
+    area_top = fb->height * psplash_theme.text_top_num
+	       / psplash_theme.text_top_den;
+  else
+    area_top = LOGO_POS_Y(fb) + POKY_IMG_HEIGHT;
   if (area_top > SPLIT_LINE_POS(fb) - h)
     area_top = SPLIT_LINE_POS(fb) - h;
   text_top = area_top + (SPLIT_LINE_POS(fb) - area_top - h) / 2;
@@ -297,7 +296,7 @@ psplash_draw_msg_ft (PSplashFB *fb, const char *msg)
 			area_top,
 			fb->width,
 			SPLIT_LINE_POS(fb) - area_top,
-			PSPLASH_BACKGROUND_COLOR);
+			PSPLASH_RGB (psplash_theme.background));
 
   for (i = 0; i < line_count; i++) {
     int lw = 0, j, pen_x;
@@ -325,9 +324,9 @@ psplash_draw_msg_bitmap (PSplashFB *fb, const char *msg)
   psplash_fb_text_size (&w, &h, &FONT_DEF, msg);
 
   psplash_fb_draw_rect (fb, 0, SPLIT_LINE_POS(fb) - h, fb->width, h,
-			PSPLASH_BACKGROUND_COLOR);
+			PSPLASH_RGB (psplash_theme.background));
   psplash_fb_draw_text (fb, (fb->width - w) / 2, SPLIT_LINE_POS(fb) - h,
-			PSPLASH_TEXT_COLOR, &FONT_DEF, msg);
+			PSPLASH_RGB (psplash_theme.text), &FONT_DEF, msg);
 }
 
 void
@@ -353,8 +352,8 @@ psplash_draw_msg (PSplashFB *fb, const char *msg)
 
 /* Coverage of the ring's top-left corner, 0 to 255; the other corners mirror
  * it and the straight edges are solid. Entries inside the ring are never
- * drawn. The ring is drawn in PSPLASH_BAR_FRAME_COLOR blended against
- * PSPLASH_BACKGROUND_COLOR, so its antialiased edge suits any background. */
+ * drawn. The ring is drawn in the frame colour blended against the
+ * background colour, so its antialiased edge suits any background. */
 #define PSPLASH_BAR_CORNER 8
 static const uint8 bar_corner[PSPLASH_BAR_CORNER][PSPLASH_BAR_CORNER] = {
   {   0,   0,   0,   0, 157, 217, 253, 255 },
@@ -381,8 +380,8 @@ bar_corner_index (int i, int n)
 static void
 psplash_draw_bar_frame (PSplashFB *fb, int x0, int y0)
 {
-  static const uint8 bg[3] = { PSPLASH_BACKGROUND_COLOR };
-  static const uint8 fg[3] = { PSPLASH_BAR_FRAME_COLOR };
+  const uint8 *bg = psplash_theme.background;
+  const uint8 *fg = psplash_theme.bar_frame;
   int x, y, i;
 
   for (y = 0; y < PSPLASH_BAR_HEIGHT; y++)
@@ -556,19 +555,19 @@ psplash_draw_progress (PSplashFB *fb, int value)
       barwidth = (CLAMP(value,0,100) * width) / 100;
       psplash_fb_draw_rect (fb, x + barwidth, y, 
     			width - barwidth, height,
-			PSPLASH_BAR_BACKGROUND_COLOR);
+			PSPLASH_RGB (psplash_theme.bar_background));
       psplash_fb_draw_rect (fb, x, y, barwidth,
-			    height, PSPLASH_BAR_COLOR);
+			    height, PSPLASH_RGB (psplash_theme.bar));
     }
   else
     {
       barwidth = (CLAMP(-value,0,100) * width) / 100;
       psplash_fb_draw_rect (fb, x, y, 
     			width - barwidth, height,
-			PSPLASH_BAR_BACKGROUND_COLOR);
+			PSPLASH_RGB (psplash_theme.bar_background));
       psplash_fb_draw_rect (fb, x + width - barwidth,
 			    y, barwidth, height,
-			    PSPLASH_BAR_COLOR);
+			    PSPLASH_RGB (psplash_theme.bar));
     }
 
   DBG("value: %i, width: %i, barwidth :%i\n", value, 
@@ -897,9 +896,9 @@ main (int argc, char** argv)
   sd_notify(0, "READY=1");
 #endif
 
-  /* Clear the background with #ecece1 */
+  /* Clear the background */
   psplash_fb_draw_rect (fb, 0, 0, fb->width, fb->height,
-                        PSPLASH_BACKGROUND_COLOR);
+                        PSPLASH_RGB (psplash_theme.background));
 
 #ifdef HAVE_LOGO_BUNDLE
   if (logo.rgb)
