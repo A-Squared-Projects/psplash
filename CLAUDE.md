@@ -27,7 +27,7 @@ These become `-D` defines via `EXTRA_GCC_FLAGS`, which `psplash-config.h` turns 
 
 Every commit must build under every configure option and useful combination (at least default, `--enable-freetype`, `--enable-img-fullscreen`, `--disable-startup-msg`, `--disable-progress-bar`, `--disable-bar-animation`, `--with-systemd`, and FreeType combined with the others) with no new warnings. The obsolete-macro warnings from autoreconf and the unused `chdir`/`write` results are pre-existing. If the FreeType or libsystemd headers are not installed, `apt-get download` the `-dev` package, unpack it with `dpkg-deb -x`, and pass `FREETYPE_CFLAGS`/`FREETYPE_LIBS` or `SYSTEMD_CFLAGS`/`SYSTEMD_LIBS` to configure.
 
-`psplash-poky-img.h` and `psplash-bar-img.h` are generated from `base-images/*.png` by `make-image-header.sh`, which needs `gdk-pixbuf-csource` on the build host. They are `BUILT_SOURCES` and not checked in. To change the logo, replace the PNG. Colors are in `psplash-colors.h`.
+`psplash-poky-img.h` is generated from `base-images/psplash-poky.png` by `make-image-header.sh`, which needs `gdk-pixbuf-csource` on the build host. It is a `BUILT_SOURCES` and not checked in. To change the logo, replace the PNG. The progress bar and its ring are drawn, not an image; colors are in `psplash-colors.h`.
 
 Manual run (needs a framebuffer device and usually root): `PSPLASH_FIFO_DIR=/tmp ./psplash -n &` then `PSPLASH_FIFO_DIR=/tmp ./psplash-write "MSG hello"`, `"PROGRESS 50"`, `"QUIT"`.
 

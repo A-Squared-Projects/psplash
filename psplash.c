@@ -14,7 +14,6 @@
 #include "psplash-config.h"
 #include "psplash-colors.h"
 #include "psplash-poky-img.h"
-#include "psplash-bar-img.h"
 #ifdef HAVE_SYSTEMD
 #include <systemd/sd-daemon.h>
 #endif
@@ -343,15 +342,73 @@ psplash_draw_msg (PSplashFB *fb, const char *msg)
 }
 
 #ifdef PSPLASH_SHOW_PROGRESS_BAR
-/* The fillable part of the bar: the bar image less a 4px border. */
+/* The bar is a ring PSPLASH_BAR_BORDER wide around the part that fills. */
+#define PSPLASH_BAR_WIDTH  230
+#define PSPLASH_BAR_HEIGHT 28
+#define PSPLASH_BAR_BORDER 4
+
+/* Coverage of the ring's top-left corner, 0 to 255; the other corners mirror
+ * it and the straight edges are solid. Entries inside the ring are never
+ * drawn. The ring is drawn in PSPLASH_BAR_FRAME_COLOR blended against
+ * PSPLASH_BACKGROUND_COLOR, so its antialiased edge suits any background. */
+#define PSPLASH_BAR_CORNER 8
+static const uint8 bar_corner[PSPLASH_BAR_CORNER][PSPLASH_BAR_CORNER] = {
+  {   0,   0,   0,   0, 157, 217, 253, 255 },
+  {   0,   0, 121, 251, 255, 255, 255, 255 },
+  {   0, 116, 255, 255, 255, 255, 255, 255 },
+  {   0, 249, 255, 255, 255, 255, 255, 255 },
+  { 145, 255, 255, 255, 255, 255, 255, 255 },
+  { 201, 255, 255, 255, 255, 255, 255, 255 },
+  { 247, 255, 255, 255, 255, 255, 255, 255 },
+  { 255, 255, 255, 255, 255, 255, 255, 255 },
+};
+
+/* Distance from the nearer end, if within a corner's reach, else -1. */
+static int
+bar_corner_index (int i, int n)
+{
+  if (i < PSPLASH_BAR_CORNER)
+    return i;
+  if (i >= n - PSPLASH_BAR_CORNER)
+    return n - 1 - i;
+  return -1;
+}
+
+static void
+psplash_draw_bar_frame (PSplashFB *fb, int x0, int y0)
+{
+  static const uint8 bg[3] = { PSPLASH_BACKGROUND_COLOR };
+  static const uint8 fg[3] = { PSPLASH_BAR_FRAME_COLOR };
+  int x, y, i;
+
+  for (y = 0; y < PSPLASH_BAR_HEIGHT; y++)
+    for (x = 0; x < PSPLASH_BAR_WIDTH; x++)
+      {
+	int cx = bar_corner_index (x, PSPLASH_BAR_WIDTH);
+	int cy = bar_corner_index (y, PSPLASH_BAR_HEIGHT);
+	unsigned a = 255;
+	uint8 c[3];
+
+	if (x >= PSPLASH_BAR_BORDER && x < PSPLASH_BAR_WIDTH - PSPLASH_BAR_BORDER
+	    && y >= PSPLASH_BAR_BORDER && y < PSPLASH_BAR_HEIGHT - PSPLASH_BAR_BORDER)
+	  continue;
+	if (cx >= 0 && cy >= 0)
+	  a = bar_corner[cy][cx];
+	for (i = 0; i < 3; i++)
+	  c[i] = (fg[i] * a + bg[i] * (255 - a) + 127) / 255;
+	psplash_fb_plot_pixel (fb, x0 + x, y0 + y, c[0], c[1], c[2]);
+      }
+}
+
+/* The fillable part of the bar: inside the ring. */
 static void
 psplash_progress_geometry (PSplashFB *fb, int *x, int *y,
 			   int *width, int *height)
 {
-  *x      = ((fb->width - BAR_IMG_WIDTH) / 2) + 4;
-  *y      = SPLIT_LINE_POS(fb) + 4;
-  *width  = BAR_IMG_WIDTH - 8;
-  *height = BAR_IMG_HEIGHT - 8;
+  *x      = (fb->width - PSPLASH_BAR_WIDTH) / 2 + PSPLASH_BAR_BORDER;
+  *y      = SPLIT_LINE_POS(fb) + PSPLASH_BAR_BORDER;
+  *width  = PSPLASH_BAR_WIDTH - 2 * PSPLASH_BAR_BORDER;
+  *height = PSPLASH_BAR_HEIGHT - 2 * PSPLASH_BAR_BORDER;
 }
 #endif /* PSPLASH_SHOW_PROGRESS_BAR */
 
@@ -478,14 +535,8 @@ psplash_draw_progress (PSplashFB *fb, int value)
 
   if (!frame_drawn)
     {
-      psplash_fb_draw_image (fb,
-			     (fb->width  - BAR_IMG_WIDTH)/2,
-			     SPLIT_LINE_POS(fb),
-			     BAR_IMG_WIDTH,
-			     BAR_IMG_HEIGHT,
-			     BAR_IMG_BYTES_PER_PIXEL,
-			     BAR_IMG_ROWSTRIDE,
-			     BAR_IMG_RLE_PIXEL_DATA);
+      psplash_draw_bar_frame (fb, (fb->width - PSPLASH_BAR_WIDTH) / 2,
+			      SPLIT_LINE_POS(fb));
       frame_drawn = 1;
       bar_frame_resync = 1;
     }
