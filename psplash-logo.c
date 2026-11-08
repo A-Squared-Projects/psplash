@@ -443,7 +443,13 @@ psplash_logo_load (const char   *partname,
 		   PSplashLogo  *logo,
 		   PSplashTheme *theme)
 {
-  struct fdt_header hdr;
+  /* libfdt refuses a tree that is not 8-byte aligned, and a struct of
+   * 32-bit fields need not be: on 32-bit ARM it is 4-byte aligned. */
+  union
+  {
+    struct fdt_header h;
+    uint64_t          align;
+  }                 hdr;
   unsigned char    *fit;
   uint32_t          size;
   int               fd, ret;
@@ -459,13 +465,13 @@ psplash_logo_load (const char   *partname,
       return -1;
     }
 
-  if (read_full (fd, (unsigned char *) &hdr, sizeof (hdr))
-      || fdt_check_header (&hdr))
+  if (read_full (fd, (unsigned char *) &hdr.h, sizeof (hdr.h))
+      || fdt_check_header (&hdr.h))
     {
       close (fd);
       return logo_fail ("partition holds no FIT");
     }
-  size = fdt_totalsize (&hdr);
+  size = fdt_totalsize (&hdr.h);
   if (size > LOGO_FIT_MAX_SIZE)
     {
       close (fd);
@@ -478,8 +484,8 @@ psplash_logo_load (const char   *partname,
       close (fd);
       return logo_fail ("out of memory");
     }
-  memcpy (fit, &hdr, sizeof (hdr));
-  ret = read_full (fd, fit + sizeof (hdr), size - sizeof (hdr));
+  memcpy (fit, &hdr.h, sizeof (hdr.h));
+  ret = read_full (fd, fit + sizeof (hdr.h), size - sizeof (hdr.h));
   close (fd);
   if (ret)
     {
