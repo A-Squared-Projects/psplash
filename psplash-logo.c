@@ -3,12 +3,14 @@
  *
  *  A logo read at runtime from a signed FIT bundle in a disk partition.
  *
- *  The bundle is a FIT with one image, /images/bmp, carrying the BMP as
- *  embedded data, at least one sha256 hash node and a signature node made
- *  the way u-boot's mkimage signs an image: RSA PKCS#1 v1.5 over sha256 of
- *  the image data. The same bundle is what u-boot verifies against its
+ *  The bundle is a FIT whose image /images/bmp carries the BMP as embedded
+ *  data, with at least one sha256 hash node and a signature node made the
+ *  way u-boot's mkimage signs an image: RSA PKCS#1 v1.5 over sha256 of the
+ *  image data. The same bundle is what u-boot verifies against its
  *  key-logo, so the boot loader and the splash show the same logo or both
- *  fall back to their own.
+ *  fall back to their own. An optional /images/theme, hashed and signed
+ *  the same way, carries the colours drawn with the logo; u-boot draws only
+ *  the BMP and ignores it.
  *
  *  SPDX-License-Identifier: GPL-2.0-or-later
  *
@@ -227,7 +229,15 @@ psplash_logo_decode_bmp (const unsigned char *data,
 }
 
 static int
-check_hash (const void *fit, int node, const void *data, int len)
+logo_fail_in (const char *image, const char *what)
+{
+  fprintf (stderr, "psplash: logo bundle ignored: %s: %s\n", image, what);
+  return -1;
+}
+
+static int
+check_hash (const void *fit, int node, const void *data, int len,
+	    const char *image)
 {
   const char    *algo = fdt_getprop (fit, node, "algo", NULL);
   const void    *value;
@@ -237,10 +247,10 @@ check_hash (const void *fit, int node, const void *data, int len)
 
   value = fdt_getprop (fit, node, "value", &value_len);
   if (!algo || strcmp (algo, "sha256") || !value)
-    return logo_fail ("a hash is not sha256");
+    return logo_fail_in (image, "a hash is not sha256");
   if (!EVP_Digest (data, len, md, &md_len, EVP_sha256 (), NULL)
       || (int) md_len != value_len || memcmp (md, value, md_len))
-    return logo_fail ("bmp image hash mismatch");
+    return logo_fail_in (image, "hash mismatch");
   return 0;
 }
 
@@ -281,59 +291,91 @@ read_key (const char *key_path)
   return key;
 }
 
+/* Check the image `name` under /images: its embedded data, every hash of
+ * it, and a signature by `key`. Returns 0 with `*data` and `*len` set, 1 if
+ * there is no such image, or -1 with the reason on stderr. */
+static int
+check_image (const void *fit, const char *name, EVP_PKEY *key,
+	     const void **data, int *len)
+{
+  char path[32];
+  int  image, sub, hashes = 0, signed_ok = 0;
+
+  snprintf (path, sizeof (path), "/images/%s", name);
+  image = fdt_path_offset (fit, path);
+  if (image == -FDT_ERR_NOTFOUND)
+    return 1;
+  if (image < 0)
+    return logo_fail_in (name, "unreadable image node");
+  *data = fdt_getprop (fit, image, "data", len);
+  if (!*data || *len <= 0)
+    return logo_fail_in (name, "no embedded data");
+
+  fdt_for_each_subnode (sub, fit, image)
+    {
+      const char *sub_name = fdt_get_name (fit, sub, NULL);
+
+      if (!sub_name)
+	continue;
+      if (!strncmp (sub_name, "hash", 4))
+	{
+	  if (check_hash (fit, sub, *data, *len, name))
+	    return -1;
+	  hashes++;
+	}
+      else if (!strncmp (sub_name, "signature", 9)
+	       && !check_signature (fit, sub, *data, *len, key))
+	signed_ok = 1;
+    }
+
+  if (!hashes)
+    return logo_fail_in (name, "no hash");
+  if (!signed_ok)
+    return logo_fail_in (name, "not signed by the logo key");
+  return 0;
+}
+
 int
 psplash_logo_from_fit (const unsigned char *fit,
 		       size_t               len,
 		       const char          *key_path,
-		       PSplashLogo         *logo)
+		       PSplashLogo         *logo,
+		       PSplashTheme        *theme)
 {
-  int         image, sub, data_len, hashes = 0, signed_ok = 0;
-  const void *data;
-  EVP_PKEY   *key;
+  const void   *bmp, *text;
+  int           bmp_len, text_len, ret;
+  PSplashTheme  t = *theme;
+  const char   *why;
+  EVP_PKEY     *key;
 
   memset (logo, 0, sizeof (*logo));
 
   if (len < sizeof (struct fdt_header) || fdt_check_full (fit, len))
     return logo_fail ("not a FIT");
 
-  image = fdt_path_offset (fit, "/images/bmp");
-  if (image < 0)
-    return logo_fail ("no /images/bmp");
-  data = fdt_getprop (fit, image, "data", &data_len);
-  if (!data || data_len <= 0)
-    return logo_fail ("bmp image has no embedded data");
-
   key = read_key (key_path);
   if (!key)
     return logo_fail ("cannot read the logo public key");
 
-  fdt_for_each_subnode (sub, fit, image)
+  ret = check_image (fit, "bmp", key, &bmp, &bmp_len);
+  if (ret == 1)
+    ret = logo_fail ("no /images/bmp");
+  if (!ret)
     {
-      const char *name = fdt_get_name (fit, sub, NULL);
-
-      if (!name)
-	continue;
-      if (!strncmp (name, "hash", 4))
-	{
-	  if (check_hash (fit, sub, data, data_len))
-	    {
-	      EVP_PKEY_free (key);
-	      return -1;
-	    }
-	  hashes++;
-	}
-      else if (!strncmp (name, "signature", 9)
-	       && !check_signature (fit, sub, data, data_len, key))
-	signed_ok = 1;
+      ret = check_image (fit, "theme", key, &text, &text_len);
+      if (ret == 1)
+	ret = 0;			/* no theme: the built-in colours */
+      else if (!ret && psplash_theme_parse (text, text_len, &t, &why))
+	ret = logo_fail_in ("theme", why);
     }
   EVP_PKEY_free (key);
+  if (ret)
+    return -1;
 
-  if (!hashes)
-    return logo_fail ("bmp image has no hash");
-  if (!signed_ok)
-    return logo_fail ("bmp image is not signed by the logo key");
-
-  return psplash_logo_decode_bmp (data, data_len, logo);
+  if (psplash_logo_decode_bmp (bmp, bmp_len, logo))
+    return -1;
+  *theme = t;
+  return 0;
 }
 
 /* The block device of the partition labelled `partname`, from sysfs: the
@@ -396,9 +438,10 @@ read_full (int fd, unsigned char *buf, size_t len)
 }
 
 int
-psplash_logo_load (const char  *partname,
-		   const char  *key_path,
-		   PSplashLogo *logo)
+psplash_logo_load (const char   *partname,
+		   const char   *key_path,
+		   PSplashLogo  *logo,
+		   PSplashTheme *theme)
 {
   struct fdt_header hdr;
   unsigned char    *fit;
@@ -444,7 +487,7 @@ psplash_logo_load (const char  *partname,
       return logo_fail ("partition shorter than its FIT");
     }
 
-  ret = psplash_logo_from_fit (fit, size, key_path, logo);
+  ret = psplash_logo_from_fit (fit, size, key_path, logo, theme);
   free (fit);
   if (!ret)
     fprintf (stderr, "psplash: verified logo from '%s'\n", partname);

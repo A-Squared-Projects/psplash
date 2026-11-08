@@ -883,7 +883,8 @@ main (int argc, char** argv)
 
 #ifdef HAVE_LOGO_BUNDLE
   /* Read before the display is opened, so the first frame has the logo. */
-  psplash_logo_load (PSPLASH_LOGO_PARTITION, PSPLASH_LOGO_KEY, &logo);
+  psplash_logo_load (PSPLASH_LOGO_PARTITION, PSPLASH_LOGO_KEY, &logo,
+		     &psplash_theme);
 #endif
 
   if ((fb = psplash_fb_new(angle,fbdev_id)) == NULL)

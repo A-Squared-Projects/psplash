@@ -12,6 +12,8 @@
 
 #include <stddef.h>
 
+#include "psplash-theme.h"
+
 typedef struct PSplashLogo
 {
   int            width, height;
@@ -32,12 +34,20 @@ psplash_logo_decode_bmp (const unsigned char *data,
 
 /* Read the FIT bundle from the partition labelled `partname`, check every
  * hash of its "bmp" image, require a signature over that image made by the
- * RSA public key in the PEM file `key_path`, and decode the BMP. Returns 0,
- * or -1 with the reason on stderr, leaving `logo` empty. */
+ * RSA public key in the PEM file `key_path`, and decode the BMP.
+ *
+ * A bundle may also carry a "theme" image, checked the same way, whose text
+ * (psplash_theme_parse) is applied to `theme`. A theme that is present but
+ * fails any check refuses the whole bundle, logo included: a logo is drawn
+ * only with the colours made for it.
+ *
+ * Returns 0, or -1 with the reason on stderr, leaving `logo` empty and
+ * `theme` untouched. */
 int
-psplash_logo_load (const char  *partname,
-		   const char  *key_path,
-		   PSplashLogo *logo);
+psplash_logo_load (const char   *partname,
+		   const char   *key_path,
+		   PSplashLogo  *logo,
+		   PSplashTheme *theme);
 
 /* Verify and decode a FIT bundle already in memory, as psplash_logo_load
  * does once it has read the partition. */
@@ -45,7 +55,8 @@ int
 psplash_logo_from_fit (const unsigned char *fit,
 		       size_t               len,
 		       const char          *key_path,
-		       PSplashLogo         *logo);
+		       PSplashLogo         *logo,
+		       PSplashTheme        *theme);
 
 void
 psplash_logo_free (PSplashLogo *logo);
