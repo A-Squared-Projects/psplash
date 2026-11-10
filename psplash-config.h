@@ -59,6 +59,20 @@
 #define PSPLASH_MSG_FONT_SIZE 34
 #endif
 
+/* The smallest size a message is set at to fit its band. */
+#ifndef PSPLASH_MSG_MIN_FONT_SIZE
+#define PSPLASH_MSG_MIN_FONT_SIZE 20
+#endif
+
+/* Rows left clear between the logo and the message text, and between the
+ * message text and the progress bar. */
+#ifndef PSPLASH_MSG_LOGO_GAP
+#define PSPLASH_MSG_LOGO_GAP 12
+#endif
+#ifndef PSPLASH_MSG_BAR_GAP
+#define PSPLASH_MSG_BAR_GAP 4
+#endif
+
 /* Widest line of FreeType MSG text, in percent of the screen width */
 #ifndef PSPLASH_MSG_MAX_WIDTH_PERCENT
 #define PSPLASH_MSG_MAX_WIDTH_PERCENT 90

@@ -158,9 +158,12 @@ msg_measure (const char *start, size_t len)
 }
 
 /* Glyph coverage is blended against the background colour, which the
- * text area is always cleared to, so the framebuffer is never read back. */
+ * text area is always cleared to, so the framebuffer is never read back.
+ * Only rows clip_top to clip_bottom - 1 are drawn: nothing reaches the logo
+ * above the text area or the bar below it. */
 static void
-msg_draw_run (PSplashFB *fb, const char *start, size_t len, int x, int y)
+msg_draw_run (PSplashFB *fb, const char *start, size_t len, int x, int y,
+	      int clip_top, int clip_bottom)
 {
   const uint8 *bg = psplash_theme.background;
   const uint8 *fg = psplash_theme.text;
@@ -188,11 +191,12 @@ msg_draw_run (PSplashFB *fb, const char *start, size_t len, int x, int y)
     for (row = 0; row < (int)slot->bitmap.rows; row++) {
       for (col = 0; col < (int)slot->bitmap.width; col++) {
 	uint8_t coverage = slot->bitmap.buffer[row * slot->bitmap.pitch + col];
-	if (coverage == 0)
+	int py = y - slot->bitmap_top + row;
+	if (coverage == 0 || py < clip_top || py >= clip_bottom)
 	  continue;
 	psplash_fb_plot_pixel (fb,
 	  pen_x + slot->bitmap_left + col,
-	  y - slot->bitmap_top + row,
+	  py,
 	  bg[0] + ((fg[0] - bg[0]) * coverage) / 255,
 	  bg[1] + ((fg[1] - bg[1]) * coverage) / 255,
 	  bg[2] + ((fg[2] - bg[2]) * coverage) / 255);
@@ -255,59 +259,85 @@ psplash_draw_msg_ft (PSplashFB *fb, const char *msg)
 {
   struct msg_word lines[MSG_MAX_LINES][MSG_MAX_WORDS];
   int line_word_count[MSG_MAX_LINES];
-  int line_count, i, space_width, max_width, line_height, w, h;
-  int area_top, text_top;
+  int line_count, i, space_width, max_width, line_height, cap, descent;
+  int band_top, band_bottom, fit, first_baseline, last_bottom, size;
 
-  FT_Load_Char (msg_ft_face, ' ', FT_LOAD_DEFAULT);
-  space_width = (int)(msg_ft_face->glyph->advance.x >> 6);
-  line_height = (int)(msg_ft_face->size->metrics.height >> 6);
-  max_width = fb->width * PSPLASH_MSG_MAX_WIDTH_PERCENT / 100;
-
-  line_count = msg_wrap (msg, max_width, lines, line_word_count, space_width);
-
-  w = 0;
-  for (i = 0; i < line_count; i++) {
-    int lw = 0, j;
-    for (j = 0; j < line_word_count[i]; j++)
-      lw += (j > 0 ? space_width : 0) + lines[i][j].width;
-    if (lw > w)
-      w = lw;
-  }
-  h = line_count > 0 ? line_count * line_height : line_height;
-
-  DBG("displaying '%s' %ix%i over %i line(s)\n", msg, w, h, line_count);
-
-  /* The text area runs from below the logo down to the split line, and the
-   * text is centred vertically within it. If the text is taller than that
-   * gap it sits directly above the split line and overlaps the logo. */
+  /* The text has a fixed band: from PSPLASH_MSG_LOGO_GAP rows below the logo
+   * (or the theme's text row) down to PSPLASH_MSG_BAR_GAP rows above the split
+   * line, where the bar starts. Every message clears the whole band and
+   * draws only inside it, so a long message cannot spill onto the bar or the
+   * logo, nor leave anything behind for the next one. */
   if (psplash_theme.text_top_den > 0)
-    area_top = fb->height * psplash_theme.text_top_num
+    band_top = fb->height * psplash_theme.text_top_num
 	       / psplash_theme.text_top_den;
   else
-    area_top = LOGO_POS_Y(fb) + POKY_IMG_HEIGHT;
-  if (area_top > SPLIT_LINE_POS(fb) - h)
-    area_top = SPLIT_LINE_POS(fb) - h;
-  text_top = area_top + (SPLIT_LINE_POS(fb) - area_top - h) / 2;
+    band_top = LOGO_POS_Y(fb) + POKY_IMG_HEIGHT;
+  band_top += PSPLASH_MSG_LOGO_GAP;
+  band_bottom = SPLIT_LINE_POS(fb) - PSPLASH_MSG_BAR_GAP;
+  if (band_top > band_bottom)
+    band_top = band_bottom;
+  max_width = fb->width * PSPLASH_MSG_MAX_WIDTH_PERCENT / 100;
 
-  /* Clear the whole area, so a short message leaves nothing behind of a
-   * longer one before it. */
+  /* A message that does not fit the band at PSPLASH_MSG_FONT_SIZE is set
+   * smaller, down to PSPLASH_MSG_MIN_FONT_SIZE; lines that still do not fit
+   * are dropped. */
+  for (size = PSPLASH_MSG_FONT_SIZE; ; size -= 2) {
+    if (size < PSPLASH_MSG_MIN_FONT_SIZE)
+      size = PSPLASH_MSG_MIN_FONT_SIZE;
+    FT_Set_Pixel_Sizes (msg_ft_face, 0, size);
+    FT_Load_Char (msg_ft_face, ' ', FT_LOAD_DEFAULT);
+    space_width = (int)(msg_ft_face->glyph->advance.x >> 6);
+    line_height = (int)(msg_ft_face->size->metrics.height >> 6);
+    descent = (int)(-msg_ft_face->size->metrics.descender >> 6);
+    FT_Load_Char (msg_ft_face, 'H', FT_LOAD_DEFAULT);
+    cap = (int)(msg_ft_face->glyph->metrics.horiBearingY >> 6);
+    line_count = msg_wrap (msg, max_width, lines, line_word_count,
+			   space_width);
+    if (cap + (line_count - 1) * line_height + descent
+	  <= band_bottom - band_top
+	|| size == PSPLASH_MSG_MIN_FONT_SIZE)
+      break;
+  }
+
+  fit = 1 + (band_bottom - band_top - cap - descent) / line_height;
+  if (fit < 1)
+    fit = 1;
+  if (line_count > fit)
+    line_count = fit;
+
+  /* The band's empty space is in the font's ascent and line gap, above the
+   * capitals, so centring the line boxes sets the text visibly high. Centre
+   * the ink instead: from the first line's cap height to the last line's
+   * baseline, with descenders hanging below and kept inside the band. */
+  first_baseline = (band_top + band_bottom
+		    - (line_count - 1) * line_height + cap) / 2;
+  last_bottom = first_baseline + (line_count - 1) * line_height + descent;
+  if (last_bottom > band_bottom)
+    first_baseline -= last_bottom - band_bottom;
+  if (first_baseline - cap < band_top)
+    first_baseline = band_top + cap;
+
+  DBG("displaying '%s' at %ipx over %i line(s) in rows %i-%i\n",
+      msg, size, line_count, band_top, band_bottom);
+
   psplash_fb_draw_rect (fb,
 			0,
-			area_top,
+			band_top,
 			fb->width,
-			SPLIT_LINE_POS(fb) - area_top,
+			band_bottom - band_top,
 			PSPLASH_RGB (psplash_theme.background));
 
   for (i = 0; i < line_count; i++) {
     int lw = 0, j, pen_x;
-    int baseline_y = text_top + (i + 1) * line_height;
+    int baseline_y = first_baseline + i * line_height;
 
     for (j = 0; j < line_word_count[i]; j++)
       lw += (j > 0 ? space_width : 0) + lines[i][j].width;
     pen_x = (fb->width - lw) / 2;
 
     for (j = 0; j < line_word_count[i]; j++) {
-      msg_draw_run (fb, lines[i][j].start, lines[i][j].len, pen_x, baseline_y);
+      msg_draw_run (fb, lines[i][j].start, lines[i][j].len, pen_x, baseline_y,
+		    band_top, band_bottom);
       pen_x += lines[i][j].width + space_width;
     }
   }
